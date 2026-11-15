@@ -1,103 +1,85 @@
-<div dir="rtl">
+# Local Dictation
 
-# Local Dictation — הכתבה קולית בעברית, מקומית, מהירה על מחשבי Intel
+Offline Hebrew + English voice typing for Windows. Hold a key, speak, release: the text appears at your cursor in any app.
+Nothing leaves your machine.
 
-מחזיקים מקש, מדברים בעברית (או עברית ואנגלית באותו משפט), משחררים — והטקסט נכתב במקום הסמן, בכל אפליקציה:
-VS Code, Cursor, Claude Code, Chrome, WhatsApp, Word ועוד.
-**הכול רץ על המחשב שלכם. בלי ענן, בלי מנוי, בלי שליחת הקלטות.**
+Built for Intel laptops without NVIDIA: it runs [ivrit.ai](https://www.ivrit.ai)'s Hebrew Whisper on the Intel Arc iGPU via OpenVINO,
+about **10× faster than CPU**.
 
-### למה עוד כלי הכתבה בעברית?
+## Performance
 
-רוב הכלים הקיימים מהירים רק עם כרטיס NVIDIA (CUDA), או שולחים את הדיבור לענן.
-ברוב המחשבים הניידים החדשים יש **Intel Core Ultra עם GPU מובנה (Arc) ו-NPU** — ושם Whisper על המעבד בלבד לוקח ~5 שניות למשפט.
-הפרויקט הזה מריץ את מודל העברית של [ivrit.ai](https://www.ivrit.ai) דרך **OpenVINO על ה-GPU של Intel**: **~0.5 שניות** מסוף הדיבור עד הטקסט.
+Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RESULTS.md)):
 
-| | זמן מסוף הדיבור (חציון) | WER עברית* |
+| Engine | Latency after speech | Hebrew WER |
 |---|---|---|
-| **ivrit turbo על Intel Arc 140T (OpenVINO)** | **0.55 שנ'** | **13.6%** |
-| ivrit turbo על CPU (faster-whisper) | 5.2 שנ' | 13.7% |
-| OpenAI whisper-large-v3-turbo על CPU | 5.7 שנ' | 29.5% |
+| **ivrit turbo, Intel Arc GPU (OpenVINO)** | **0.55 s** | **13.6%** |
+| ivrit turbo, CPU | 5.2 s | 13.7% |
+| OpenAI whisper-large-v3-turbo, CPU | 5.7 s | 29.5% |
 
-\* FLEURS-he, נמדד על Core Ultra 9 285H. פירוט מלא, כולל NPU ועומס מקביל: [`bench/RESULTS.md`](bench/RESULTS.md).
+## Features
 
-### יכולות
+- **Works in any app**: VS Code, Cursor, browsers, WhatsApp, Word, terminals. Never presses Enter.
+- **Hebrew/English in one sentence**, with a personal dictionary that handles Hebrew prefixes (`בסופה בייס` → `ב-Supabase`).
+- **Hold to talk, or tap for hands-free.** Any key, including the Copilot key.
+- **Per-app modes**: Verbatim, Clean, Professional, Developer.
+- **Optional live preview** while speaking (ivrit.ai Zipformer streaming).
+- **Optional local LLM polish** (Gemma 4 E4B). A guard rejects any output that answers, follows dictated instructions,
+  changes numbers, or adds English words you didn't say.
+- **Private**: mic opens only while recording, no dictation into password fields, no network at runtime, logs contain timings only.
 
-- **Push-to-Talk** (החזקה) או **לחיצה קצרה** להקלטה ללא ידיים; מקש לבחירה — כולל מקש Copilot.
-- **עברית + אנגלית באותו משפט**, ומילון אישי שמבין תחיליות: "בסופה בייס" ← "ב-Supabase", "לורסל" ← "ל-Vercel".
-- **מצבי עיבוד** לפי האפליקציה הפעילה: Verbatim / Clean / Professional / Developer.
-- **תצוגה חיה בזמן הדיבור** (אופציונלי, Zipformer streaming של ivrit.ai).
-- **ליטוש עם מודל שפה מקומי** (אופציונלי, Gemma 4 E4B על ה-GPU) עם **שומר שמונע שינוי משמעות**:
-  המודל לא עונה לשאלות שהוכתבו, לא מבצע הוראות שבטקסט, לא משנה מספרים, ולא מכניס מילה באנגלית שלא נאמרה
-  (בדיקה פונטית: "גט יוזר" ← getUser ✓, "איי די" ← API ✗). כל דחייה ⇒ הטקסט המקורי נשמר.
-- **פרטיות:** מיקרופון פתוח רק בזמן הקלטה, אין הכתבה לשדות סיסמה, הטקסט לא נכנס להיסטוריית Win+V,
-  הלוגים מכילים זמנים בלבד — לעולם לא את התוכן, ואין שום קריאת רשת בזמן ריצה.
-- **אמינות:** החלפת מיקרופון, ניתוק אוזניות, Sleep, החלפת חלון — הטקסט לעולם לא הולך לאיבוד (נשאר בלוח ובתפריט).
-
-### דרישות
+## Requirements
 
 - Windows 11, Python 3.12
-- מומלץ: Intel Core Ultra / Arc (GPU מובנה). בלי GPU של Intel — עובד על CPU (מדויק, ~5 שנ' להכתבה).
-- ~6GB דיסק (‏+6GB למודל השפה האופציונלי), 16GB RAM ומעלה.
+- Intel Core Ultra / Arc recommended. Without an Intel GPU it falls back to CPU (accurate, ~5 s).
+- ~6 GB disk (+6 GB for the optional LLM)
 
-### התקנה
+## Install
 
 ```
-git clone <repo-url> local-dictation
+git clone https://github.com/oriamos/local-dictation
 cd local-dictation
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python scripts\setup_models.py          # הורדה והמרה של המודלים (פעם אחת, דורש אינטרנט)
-.venv\Scripts\python scripts\setup_models.py --llm    # אופציונלי: מודל השפה לליטוש
+.venv\Scripts\python scripts\setup_models.py        # one-time download + conversion
 ```
 
-אחר כך: לחיצה כפולה על **`Local Dictation.lnk`** בתיקיית הפרויקט. אייקון מיקרופון יופיע במגש המערכת.
-אין במקלדת Right Ctrl? תפריט ← מקש קיצור ← "בחר מקש קיצור…" ולוחצים על המקש הרצוי.
+Add `--llm` to also download the optional polish model.
 
-### מגבלות ידועות
+## Usage
 
-- Windows בלבד. אין עדיין מסלול CUDA ל-NVIDIA.
-- המיקרופון הדיגיטלי של Intel צריך ~0.4 שנ' "להתעורר" בכל פתיחה (מוצג "מתחבר…"); אפשר להפעיל "מיקרופון חם" ל-30 שנ'.
-- התצוגה החיה מתעדכנת כל ~1.3 שנ' (מגבלה של מודל ה-Zipformer).
-- מודל השפה מוסיף 2–6 שנ', ולכן כבוי כברירת מחדל.
+Double-click **`Local Dictation.lnk`**. A mic icon appears in the system tray (the menu is in Hebrew).
 
-</div>
+| Action | |
+|---|---|
+| Hold **Right Ctrl**, speak, release | dictate |
+| Tap once, tap again | hands-free dictation |
+| **Esc** | cancel |
+| Tray → Hotkey → Pick a hotkey… | choose another key |
+| Tray → Personal dictionary | add terms and how they're misheard |
 
----
+## Known limitations
 
-# Local Dictation (English)
+- Windows only. No NVIDIA/CUDA path yet.
+- Intel's digital mic takes ~0.4 s to wake (shown as "connecting"). Enable the warm-mic option for instant restarts.
+- Live preview updates every ~1.3 s (model limit).
+- The LLM polish adds 2–6 s, so it's off by default.
 
-Offline Hebrew/English voice typing for Windows, fast on Intel laptops without NVIDIA.
-Hold a key, speak, release — the text is inserted at the cursor in any app. Nothing leaves your machine.
-
-It runs ivrit.ai's Hebrew fine-tune of Whisper large-v3-turbo through **OpenVINO on the Intel Arc iGPU** (~0.5 s from end of
-speech to text, vs ~5 s on CPU), with a CTranslate2 CPU fallback, an optional ivrit.ai Zipformer live preview, a Hebrew-aware
-personal dictionary, per-app processing modes, and an optional local-LLM polish pass (Gemma 4 E4B) behind a guard that rejects
-any output that answers, obeys, changes numbers, or introduces English words that were not spoken.
-
-**Install:** see the commands above (`requirements.txt`, then `scripts/setup_models.py`). **Run:** `Local Dictation.lnk`
-or `.venv\Scripts\pythonw.exe launch.pyw`. Settings/dictionary live in `%APPDATA%\LocalDictation\dictation.db`.
+## Project layout
 
 | Path | |
 |---|---|
-| `dictation/` | the app — one module per layer: `audio`, `asr`, `postprocess`, `llm`, `context`, `inject`, `hotkey`, `overlay`, `storage` |
-| `scripts/setup_models.py` | downloads / converts models; creates the shortcut |
-| `bench/` | ASR + LLM benchmarks, personal test-set recorder, [`RESULTS.md`](bench/RESULTS.md) |
-| `tests/` | smoke tests: `python -m tests.smoke_hotkey`, `tests.smoke_inject`, `tests.smoke_pipeline` |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | research, design decisions, trade-offs (Hebrew) |
+| `dictation/` | the app: audio, asr, postprocess, llm, context, inject, hotkey, overlay, storage |
+| `scripts/setup_models.py` | model download/conversion, shortcut |
+| `bench/` | ASR and LLM benchmarks |
+| `tests/` | smoke tests (`python -m tests.smoke_pipeline`, etc.) |
+| `docs/ARCHITECTURE.md` | design decisions (Hebrew) |
 
-Contributions welcome — especially an NVIDIA/CUDA engine, macOS/Linux ports, and personal-voice benchmark data.
+Contributions welcome, especially an NVIDIA engine, macOS/Linux ports, and real-voice test data.
 
-## Credits & licenses
+## License
 
-Code: MIT (see [LICENSE](LICENSE)). Models are downloaded separately and keep their own licenses:
-
-| Component | License |
-|---|---|
-| [ivrit-ai/whisper-large-v3-turbo](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo) (+ `-ct2`) — ivrit.ai | Apache-2.0 |
-| [ivrit-ai/zipformer2-66m-streaming-he](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he) — developed by Yakov Kolani, mirrored by ivrit.ai | CC-BY-4.0 |
-| [OpenVINO/gemma-4-E4B-it-int4-ov](https://huggingface.co/OpenVINO/gemma-4-E4B-it-int4-ov) — Google / Intel | Apache-2.0 |
-| OpenVINO, OpenVINO GenAI (Intel) · faster-whisper / CTranslate2 · sherpa-onnx (k2-fsa) · Silero VAD | Apache-2.0 / MIT |
-| PySide6 (Qt for Python) | LGPL-3.0 |
-| Benchmark data: [google/fleurs](https://huggingface.co/datasets/google/fleurs) (not redistributed) | CC-BY-4.0 |
-
-Thanks to [ivrit.ai](https://www.ivrit.ai) for making open Hebrew speech models possible.
+Code: MIT. Models are downloaded separately under their own licenses:
+[ivrit-ai Whisper](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo) (Apache-2.0),
+[ivrit-ai Zipformer](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he) by Yakov Kolani (CC-BY-4.0),
+[Gemma 4 E4B OpenVINO](https://huggingface.co/OpenVINO/gemma-4-E4B-it-int4-ov) (Apache-2.0).
+Built on OpenVINO, faster-whisper, sherpa-onnx, Silero VAD and PySide6 (LGPL-3.0).
