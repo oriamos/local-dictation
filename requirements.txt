@@ -1,0 +1,13 @@
+# app
+openvino-genai>=2026.0   # primary engine: ivrit Whisper + optional LLM on Intel GPU/NPU
+faster-whisper>=1.2      # CPU fallback (CTranslate2) + bundled Silero VAD
+sherpa-onnx>=2.0         # optional live preview (ivrit-ai Zipformer streaming)
+sounddevice>=0.5
+numpy>=2
+psutil>=6
+PySide6-Essentials>=6.8  # tray, overlay, dialogs (Qt; no Chromium/Electron)
+comtypes>=1.4            # UI Automation (password-field detection)
+huggingface_hub>=0.30    # model setup / cache
+# benchmark
+soundfile>=0.12
+jiwer>=3

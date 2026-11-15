@@ -1,0 +1,10 @@
+.venv/
+.convenv/
+__pycache__/
+*.pyc
+models/
+ov_cache/
+bench/data/
+bench/*.log
+*.lnk
+bench/results/
