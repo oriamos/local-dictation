@@ -52,6 +52,10 @@ py -3.12 -m venv .venv
 ```
 
 **macOS**
+
+macOS doesn't ship Python 3.12. Install it first from [python.org](https://www.python.org/downloads/macos/)
+or with Homebrew (`brew install python@3.12`), and check that `python3.12 --version` works.
+
 ```
 git clone https://github.com/oriamos/local-dictation
 cd local-dictation
