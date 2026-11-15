@@ -1,13 +1,9 @@
 """Lecture pipeline without a mic or ONLYOFFICE: three FLEURS clips with pauses are fed as a 'lecture'.
-Checks segmentation at pauses, timestamps, transcript/audio files on disk, the mark event, and the local API
-(token required). Run:  python -m tests.smoke_lecture
+Checks segmentation at pauses, timestamps, transcript/audio files on disk and the mark event. Run:  python -m tests.smoke_lecture
 """
-import json
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -16,7 +12,7 @@ import soundfile as sf
 
 sys.stdout.reconfigure(encoding="utf-8")
 from dictation.asr import make_engine  # noqa: E402
-from dictation.lecture import LectureController, LectureSession  # noqa: E402
+from dictation.lecture import LectureSession  # noqa: E402
 from dictation.storage import DEFAULT_DICTIONARY, DEFAULT_SETTINGS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,18 +54,4 @@ flac_s = sf.info(s.folder / "audio.flac").duration
 ok = len(segs) >= 3 and all(e["text"] for e in segs) and md.count("[") >= len(segs) and abs(flac_s - len(audio) / SR) < 0.5
 print(f"transcript.md lines: {md.count(chr(10))}, audio.flac {flac_s:.1f}s, mark event: {any(e['type'] == 'mark' for e in events)}")
 
-# ---- local API: auth + status/events
-class S(dict):
-    def get(self, k, d=None): return super().get(k, d)
-    def set(self, k, v): self[k] = v
-ctl = LectureController(S(), lambda: eng, pool.submit, tmp, lambda *a: None)
-port = ctl.serve()
-def get(path):
-    try:
-        return json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=3).read())
-    except urllib.error.HTTPError as e:
-        return {"http": e.code}
-bad = get("/status?t=wrong"); good = get(f"/status?t={ctl.token}"); evs = get(f"/events?since=0&t={ctl.token}")
-print("api: no token →", bad, "| status →", good.get("state"), "| events →", len(evs.get("events", [])))
-ok &= bad.get("http") == 403 and good.get("state") == "idle"
 print("RESULT:", "PASS" if ok else "FAIL")

@@ -1,4 +1,4 @@
-"""Lecture mode: continuous transcription into a live document (ONLYOFFICE plugin) with the same Whisper engine.
+"""Lecture mode: continuous transcription into the built-in lecture editor, with the same Whisper engine.
 
 Flow
   mic (always on during the lecture) ─► audio file on disk (FLAC, crash-safe)
@@ -6,27 +6,18 @@ Flow
                                          └► Whisper (shared single-thread ASR pool, so dictation and lecture never
                                             run concurrently) with prompt = lecture terms + tail of previous text
                                               └► cleanup + dictionary ─► transcript.md on disk (append + fsync)
-                                                                      └► event queue ─► local HTTP API ─► plugin
-
-Local API (127.0.0.1 only; every request must carry ?t=<token>, which only the installed plugin knows):
-  GET  /status                 → state, elapsed, session id, title, terms
-  GET  /events?since=N         → new events since id N  (segment | mark | info)
-  POST /start {title, terms}   POST /stop   POST /mark   POST /terms {terms}
+                                                                      └► listeners (the editor window)
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import queue
 import re
-import secrets
 import threading
 import time
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
@@ -204,149 +195,63 @@ class LectureSession:
 
 
 class LectureController:
-    """Owns the current session, the event log the plugin reads, and the local HTTP API."""
+    """Owns the current session and fans its events out to listeners (the editor window)."""
 
     def __init__(self, store, get_engine, submit, base_dir: Path, notify):
         self.store, self.get_engine, self.submit, self.base_dir, self.notify = store, get_engine, submit, base_dir, notify
         self.session: LectureSession | None = None
-        self.session_id = ""
-        self.events: list[dict] = []
-        self._ev_lock = threading.Lock()
-        self.token = store.get("lecture_token") or secrets.token_urlsafe(16)
-        store.set("lecture_token", self.token)
-        self.port = int(store.get("lecture_port") or 47821)
-        self.httpd = None
+        self.listeners: list = []          # callables(event) — called from worker threads
+        self._seq = 0
+        self._lock = threading.Lock()
 
-    # ------------------------------------------------------------------ session
     @property
     def active(self) -> bool:
         return bool(self.session and self.session.running)
 
-    def start(self, title: str = "", terms: list[str] | None = None, base_dict=None) -> dict:
+    def start(self, title: str = "", terms: list[str] | None = None, base_dict=None) -> LectureSession:
         if self.active:
-            return self.status()
+            return self.session
         engine = self.get_engine()
         if engine is None:
-            raise RuntimeError("המודל עדיין נטען")
+            raise RuntimeError("המודל עדיין נטען — נסה שוב בעוד כמה שניות")
         title = (title or "").strip() or f"הרצאה {datetime.now():%d.%m.%Y %H:%M}"
-        terms = terms if terms is not None else (self.store.get("lecture_terms") or [])
+        if terms is not None:
+            self.set_terms(terms)
+        terms = self.store.get("lecture_terms") or []
         safe = re.sub(r'[\\/:*?"<>|]+', "_", title)[:60]
         folder = self.base_dir / f"{datetime.now():%Y-%m-%d_%H%M} {safe}"
-        s = LectureSession(folder, title, terms, self.submit, base_dict or {}, self._add_event, self._on_error)
+        s = LectureSession(folder, title, terms, self.submit, base_dict or {}, self._emit, self._on_error)
         s.engine = engine
-        with self._ev_lock:
-            self.events = []
-            self.session_id = secrets.token_hex(4)
         s.start()
         self.session = s
-        self._add_event({"type": "title", "ts": "00:00", "text": title})
         self.notify("start", folder)
-        return self.status()
+        return s
 
-    def stop(self) -> dict:
-        if self.session:
+    def stop(self):
+        if self.session and self.session.running:
             self.session.stop()
             self.notify("stop", self.session.folder)
-        return self.status()
 
     def mark(self):
         if self.active:
             self.session.mark()
 
     def set_terms(self, terms: list[str]):
-        terms = [t.strip() for t in terms if t.strip()]
+        terms = [t.strip() for t in terms if t and t.strip()]
         self.store.set("lecture_terms", terms)
         if self.session:
             self.session.set_terms(terms)
 
-    def _add_event(self, ev: dict):
-        with self._ev_lock:
-            ev["id"] = len(self.events) + 1
-            self.events.append(ev)
+    def _emit(self, ev: dict):
+        with self._lock:
+            self._seq += 1
+            ev["id"] = self._seq
+        for fn in list(self.listeners):
+            try:
+                fn(ev)
+            except Exception:
+                log.exception("lecture listener failed")
 
     def _on_error(self, msg):
-        self._add_event({"type": "info", "ts": fmt_ts(self.session.elapsed if self.session else 0),
-                         "text": f"שגיאה בתמלול קטע: {msg[:120]}"})
-
-    def status(self) -> dict:
-        s = self.session
-        return {"state": "recording" if self.active else "idle", "session": self.session_id,
-                "elapsed": fmt_ts(s.elapsed) if self.active else "", "title": s.title if s else "",
-                "folder": str(s.folder) if s else "", "terms": self.store.get("lecture_terms") or [],
-                "next": len(self.events)}
-
-    # ------------------------------------------------------------------ HTTP API
-    def serve(self):
-        ctl = self
-
-        class H(BaseHTTPRequestHandler):
-            def log_message(self, *a):  # keep transcripts out of any console/log
-                pass
-
-            def _send(self, code, obj):
-                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _auth(self):
-                q = parse_qs(urlparse(self.path).query)
-                if q.get("t", [""])[0] != ctl.token:
-                    self._send(403, {"error": "bad token"}); return None
-                return q
-
-            def do_GET(self):
-                q = self._auth()
-                if q is None:
-                    return
-                path = urlparse(self.path).path
-                if path == "/status":
-                    return self._send(200, ctl.status())
-                if path == "/events":
-                    since = int(q.get("since", ["0"])[0])
-                    with ctl._ev_lock:
-                        evs = [e for e in ctl.events if e["id"] > since]
-                    return self._send(200, {"events": evs, **ctl.status()})
-                self._send(404, {"error": "not found"})
-
-            def do_POST(self):
-                q = self._auth()
-                if q is None:
-                    return
-                n = int(self.headers.get("Content-Length") or 0)
-                try:
-                    body = json.loads(self.rfile.read(n) or b"{}") if n else {}
-                except ValueError:
-                    body = {}
-                path = urlparse(self.path).path
-                try:
-                    if path == "/start":
-                        if "terms" in body:
-                            ctl.set_terms(body.get("terms") or [])
-                        return self._send(200, ctl.start_from_plugin(body.get("title", "")))
-                    if path == "/stop":
-                        return self._send(200, ctl.stop())
-                    if path == "/mark":
-                        ctl.mark(); return self._send(200, ctl.status())
-                    if path == "/terms":
-                        ctl.set_terms(body.get("terms") or []); return self._send(200, ctl.status())
-                except Exception as e:
-                    return self._send(500, {"error": str(e)})
-                self._send(404, {"error": "not found"})
-
-        for port in (self.port, self.port + 1, self.port + 2, 0):
-            try:
-                self.httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
-                break
-            except OSError:
-                continue
-        self.port = self.httpd.server_address[1]
-        threading.Thread(target=self.httpd.serve_forever, daemon=True, name="lecture-api").start()
-        log.info("lecture API on 127.0.0.1:%d", self.port)
-        return self.port
-
-    # set by the app: starting must happen on the Qt side (dictionary, notifications)
-    start_from_plugin = start
+        self._emit({"type": "info", "ts": fmt_ts(self.session.elapsed if self.session else 0),
+                    "text": f"שגיאה בתמלול קטע: {msg[:120]}"})

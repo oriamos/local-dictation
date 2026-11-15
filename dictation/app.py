@@ -234,14 +234,8 @@ class App:
         a = md.addAction("שיפור טקסט עם AI מקומי (Professional + הכתבות ארוכות)")
         a.setCheckable(True); a.setChecked(self.store.get("llm")["enabled"]); a.toggled.connect(self.set_llm)
         m.addAction("מילון אישי…", self.open_dictionary)
-        lm = m.addMenu("הרצאה (ONLYOFFICE)")
-        self.lecture_start_action = lm.addAction("● התחל תמלול הרצאה", self.lecture_start)
-        self.lecture_stop_action = lm.addAction("■ עצור", self.lecture_stop)
-        self.lecture_mark_action = lm.addAction("⭐ סמן רגע חשוב", self.lecture_mark)
-        lm.addSeparator()
-        lm.addAction("התקן / עדכן את התוסף ב-ONLYOFFICE", self.install_onlyoffice_plugin)
-        lm.addAction("פתח את תיקיית ההרצאות", self.open_lectures_folder)
-        self._lecture_menu_state()
+        m.addAction("📝 עורך הרצאות (תמלול חי)…", self.open_editor)
+        m.addAction("פתח את תיקיית ההרצאות", self.open_lectures_folder)
         m.addSeparator()
         a = m.addAction("הצג חיווי הקלטה (Overlay)"); a.setCheckable(True); a.setChecked(self.store.get("overlay"))
         a.toggled.connect(self.set_overlay)
@@ -363,64 +357,29 @@ class App:
         self.lecture = LectureController(self.store, lambda: self.engine if self.model_ready.is_set() else None,
                                          self.asr_pool.submit, self.lectures_dir,
                                          lambda kind, folder: self.b.lecture.emit(kind, str(folder)))
-        self.lecture.start_from_plugin = lambda title: self.lecture.start(title, None, self.store.dictionary())
-        try:
-            port = self.lecture.serve()
-            from . import onlyoffice
-            if onlyoffice.installed():
-                onlyoffice.write_settings(port, self.lecture.token)  # port may differ from last run
-        except Exception:
-            log.exception("lecture API failed to start")
+        self.editor = None
 
-    def _lecture_menu_state(self):
-        active = getattr(self, "lecture", None) is not None and self.lecture.active
-        self.lecture_start_action.setEnabled(not active)
-        self.lecture_stop_action.setEnabled(active)
-        self.lecture_mark_action.setEnabled(active)
-
-    def lecture_start(self):
-        try:
-            self.lecture.start("", None, self.store.dictionary())
-        except Exception as e:
-            self.overlay.show_state("error", str(e), 3000)
-
-    def lecture_stop(self):
-        self.lecture.stop()
+    def open_editor(self):
+        if self.editor is None:
+            from .editor import LectureEditor
+            self.editor = LectureEditor(self.lecture, self.store, self.store.dictionary)
+        self.editor.show(); self.editor.raise_(); self.editor.activateWindow()
 
     def lecture_mark(self):
         self.lecture.mark()
         self.overlay.show_state("info", "⭐ סומן כחשוב", 1000)
 
     def on_lecture(self, kind, folder):
-        self._lecture_menu_state()
         if kind == "start":
             if self.recording:
                 self.cancel(silent=True)
             self.tray.setIcon(tray_icon("#ff4d4f"))
             self.tray.setToolTip("Local Dictation — מתמלל הרצאה")
-            self.tray.showMessage("תמלול הרצאה התחיל",
-                                  "הטקסט נכנס למסמך ב-ONLYOFFICE ונשמר גם בתיקייה. מקש ההכתבה = סמן רגע חשוב.",
-                                  QSystemTrayIcon.Information, 5000)
         else:
             self._idle_icon()
             self.tray.setToolTip("Local Dictation — " + self.status_action.text())
-            self.tray.showMessage("תמלול ההרצאה נעצר", f"השמע והתמלול נשמרו ב:\n{folder}",
+            self.tray.showMessage("תמלול ההרצאה נעצר", f"השמע, התמלול והמסמך נשמרו ב:\n{folder}",
                                   QSystemTrayIcon.Information, 6000)
-
-    def install_onlyoffice_plugin(self):
-        from . import onlyoffice
-        if not onlyoffice.editor_installed():
-            self.tray.showMessage("ONLYOFFICE לא נמצא", "התקן את ONLYOFFICE Desktop Editors ואז נסה שוב.",
-                                  QSystemTrayIcon.Warning, 6000)
-            return
-        try:
-            dest = onlyoffice.install(self.lecture.port, self.lecture.token)
-            log.info("onlyoffice plugin installed to %s", dest)
-            self.tray.showMessage("התוסף הותקן", "סגור ופתח מחדש את ONLYOFFICE, ואז: תוספים ← תמלול הרצאה.",
-                                  QSystemTrayIcon.Information, 8000)
-        except Exception as e:
-            log.exception("plugin install failed")
-            self.tray.showMessage("התקנת התוסף נכשלה", str(e), QSystemTrayIcon.Warning, 8000)
 
     def open_lectures_folder(self):
         from PySide6.QtCore import QUrl

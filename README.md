@@ -25,6 +25,8 @@ Windows, Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RES
 - **Hold to talk, or tap for hands-free.** Any key, including the Copilot key.
 - **Per-app modes**: Verbatim, Clean, Professional, Developer.
 - **Optional live preview** while speaking (ivrit.ai Zipformer streaming).
+- **Lecture editor**: a built-in RTL word processor that transcribes a lecture live while you keep editing.
+  Timestamps, ⭐ important moments, a per-lecture glossary, autosave of audio + text, Word export.
 - **Optional local LLM polish** (Gemma 4 E4B). A guard rejects any output that answers, follows dictated instructions,
   changes numbers, or adds English words you didn't say.
 - **Private**: mic opens only while recording, no dictation into password fields, no network at runtime, logs contain timings only.
@@ -79,6 +81,7 @@ A mic icon appears in the tray / menu bar (the menu is in Hebrew).
 | Hands-free | tap, then tap again | same |
 | Cancel | Esc | Esc |
 | Change the key | Tray → Hotkey → Pick a hotkey… | same |
+| Transcribe a lecture | Tray → Lecture editor → Start | same |
 
 ## Known limitations
 
