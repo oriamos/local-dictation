@@ -6,6 +6,7 @@ numpy>=2
 psutil>=6
 PySide6-Essentials>=6.8  # tray / menu bar, overlay, dialogs (Qt; no Chromium/Electron)
 huggingface_hub>=0.30    # model setup / cache
+soundfile>=0.12          # lecture mode: audio saved as FLAC
 
 # Windows: Intel GPU/NPU engine + UI Automation
 openvino-genai>=2026.0; sys_platform == "win32"
@@ -20,5 +21,4 @@ mlx-whisper>=0.4; sys_platform == "darwin" and platform_machine == "arm64"
 mlx-lm>=0.30; sys_platform == "darwin" and platform_machine == "arm64"
 
 # benchmark
-soundfile>=0.12
 jiwer>=3
