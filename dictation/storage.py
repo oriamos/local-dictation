@@ -42,6 +42,8 @@ DEFAULT_SETTINGS = {
             "model_dir": "mlx-community/gemma-4-e4b-it-4bit" if APPLE_SILICON else str(MODELS_DIR / "gemma-4-E4B-it-int4-ov"),
             "professional": True,          # always polish in Professional mode
             "clean_min_words": 25},        # in Clean mode only for long dictations; Verbatim/Developer never
+    "lecture_chunk_s": 30,           # lecture editor: a chunk every ~30 s regardless of pauses (max 29.5 s audio)
+    "lecture_polish": False,         # lecture editor: normalize each chunk with the local LLM (guarded)
     "history": False,                # opt-in
     "inject_method": "paste",        # paste | type
     "restore_clipboard": True,

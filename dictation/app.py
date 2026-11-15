@@ -188,8 +188,8 @@ class App:
                                   " — ואז הפעל מחדש את האפליקציה.", QSystemTrayIcon.Warning, 15000)
         if self.store.get("live_preview"):
             threading.Thread(target=self._load_preview, daemon=True).start()
-        if self.store.get("llm")["enabled"]:
-            threading.Thread(target=self._load_llm, daemon=True).start()
+        if self.store.get("llm")["enabled"]:  # the lecture editor loads it on demand when its switch is on
+            self.ensure_llm()
         self.hook.start()
 
     # ------------------------------------------------------------------ menu
@@ -266,24 +266,42 @@ class App:
         self._hk_dlg = HotkeyDialog(self)
         self._hk_dlg.show(); self._hk_dlg.raise_(); self._hk_dlg.activateWindow()
 
+    def _llm_wanted(self) -> bool:
+        """The polish model is used by dictation (menu switch) and/or the lecture editor (its own switch)."""
+        return bool(self.store.get("llm")["enabled"] or self.store.get("lecture_polish"))
+
     def set_llm(self, on):
         cfg = self.store.get("llm"); cfg["enabled"] = on; self.store.set("llm", cfg)
-        if on and self.llm is None:
-            threading.Thread(target=self._load_llm, daemon=True).start()
-        elif not on:
-            self.llm = None  # frees ~3 GB of shared GPU memory
+        self.ensure_llm()
 
-    def _load_llm(self):
+    def ensure_llm(self, on_ready=None):
+        """Load the model in the background if any feature wants it; free it (~3 GB) when none does."""
+        if self._llm_wanted():
+            if self.llm is None and not getattr(self, "_llm_loading", False):
+                self._llm_loading = True
+                threading.Thread(target=self._load_llm, args=(on_ready,), daemon=True).start()
+            elif self.llm is not None and on_ready:
+                on_ready(True)
+        else:
+            self.llm = None
+
+    def _load_llm(self, on_ready=None):
         from .llm import LLMPolisher
         cfg = self.store.get("llm")
+        ok = False
         try:
             p = LLMPolisher(cfg["model_dir"], cfg["device"], cfg["budget_s"], cfg.get("budget_per_word", 0.0))
             p.load()
-            if self.store.get("llm")["enabled"]:
+            if self._llm_wanted():
                 self.llm = p
+                ok = True
             log.info("llm loaded in %.1fs", p.load_s)
         except Exception:
             log.exception("llm failed to load (dictation continues without it)")
+        finally:
+            self._llm_loading = False
+            if on_ready:
+                on_ready(ok)
 
     def _should_polish(self, mode, text):
         cfg = self.store.get("llm")
@@ -356,13 +374,14 @@ class App:
         self.lectures_dir = docs / "Local Dictation - הרצאות"
         self.lecture = LectureController(self.store, lambda: self.engine if self.model_ready.is_set() else None,
                                          self.asr_pool.submit, self.lectures_dir,
-                                         lambda kind, folder: self.b.lecture.emit(kind, str(folder)))
+                                         lambda kind, folder: self.b.lecture.emit(kind, str(folder)),
+                                         get_llm=lambda: self.llm)
         self.editor = None
 
     def open_editor(self):
         if self.editor is None:
             from .editor import LectureEditor
-            self.editor = LectureEditor(self.lecture, self.store, self.store.dictionary)
+            self.editor = LectureEditor(self.lecture, self.store, self.store.dictionary, ensure_llm=self.ensure_llm)
         self.editor.show(); self.editor.raise_(); self.editor.activateWindow()
 
     def lecture_mark(self):

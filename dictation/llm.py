@@ -34,6 +34,9 @@ MODE_HINT = {
     "clean": "Style: clean and readable, as close to the spoken words as possible.",
     "professional": "Style: clear, well-structured professional writing (still the same content, same length roughly).",
     "developer": "Style: developer prompt. Preserve every identifier, path, command and code term exactly; only fix punctuation and fillers.",
+    "lecture": "Style: clean and readable lecture notes, as close to the spoken words as possible. This is ONE ~30-second "
+               "chunk of a longer lecture transcript, so it may start or end in the middle of a sentence: keep the first "
+               "and last words exactly as they are; never complete, trim or round off a sentence at either edge.",
 }
 
 ANSWER_STARTS = re.compile(r"^\s*(בטח|בוודאי|הנה|כמובן|להלן|sure|here|certainly|of course|i can|i'm sorry|אני מצטער|התשובה)", re.I)
@@ -122,6 +125,13 @@ def guard(src: str, out: str, mode: str, terms: list[str] | None = None) -> tupl
     ratio = len(" ".join(ow)) / max(1, len(" ".join(sw)))
     if not (0.6 <= ratio <= 1.35):
         return False, f"length ratio {ratio:.2f}"
+    if mode == "lecture" and sw and ow:
+        # chunk edges must survive: the model likes to "finish" a sentence cut mid-way by dropping its tail
+        bare = lambda w: w.strip(".,;:!?-")  # noqa: E731  (added punctuation alone is fine)
+        if bare(sw[-1]) != bare(ow[-1]):
+            return False, f"last word changed ({bare(sw[-1])!r} → {bare(ow[-1])!r})"
+        if bare(sw[0]) != bare(ow[0]):
+            return False, f"first word changed ({bare(sw[0])!r} → {bare(ow[0])!r})"
     foreign = re.findall(rf"[^\s{HEB}A-Za-z0-9.,;:!?'\"()\[\]{{}}<>/\\\-_+=*&%$#@^~`|₪€–—…״׳]", out)
     if foreign:
         return False, f"foreign script {''.join(sorted(set(foreign)))[:10]!r}"
@@ -217,9 +227,9 @@ class LLMPolisher:
                 break
         return out, cancelled
 
-    def polish(self, text: str, mode: str, terms: list[str] | None = None) -> Polish:
+    def polish(self, text: str, mode: str, terms: list[str] | None = None, budget: float | None = None) -> Polish:
         t0 = time.perf_counter()
-        budget = max(self.budget_s, self.budget_per_word * len(text.split()))
+        budget = budget or max(self.budget_s, self.budget_per_word * len(text.split()))
         if self.mlx:
             out, cancelled = self._polish_mlx(text, mode, terms, t0, budget)
             return self._finish(text, mode, terms, out, cancelled, t0, budget)

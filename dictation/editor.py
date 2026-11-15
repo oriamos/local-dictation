@@ -85,12 +85,14 @@ def _light_palette():
 
 class _Bridge(QObject):
     event = Signal(dict)
+    llm_ready = Signal(bool)
 
 
 class LectureEditor(QMainWindow):
-    def __init__(self, controller, store, get_dictionary):
+    def __init__(self, controller, store, get_dictionary, ensure_llm=None):
         super().__init__()
         self.ctl, self.store, self.get_dictionary = controller, store, get_dictionary
+        self.ensure_llm = ensure_llm or (lambda on_ready=None: on_ready and on_ready(False))
         self.setWindowTitle("תמלול הרצאה — Local Dictation")
         self.setLayoutDirection(Qt.RightToLeft)
         self.resize(1180, 820)
@@ -101,6 +103,7 @@ class LectureEditor(QMainWindow):
 
         self.bridge = _Bridge()
         self.bridge.event.connect(self._on_event)
+        self.bridge.llm_ready.connect(self._on_llm_ready)
         controller.listeners.append(self.bridge.event.emit)  # worker threads → Qt thread
 
         root = QWidget(); self.setCentralWidget(root)
@@ -150,6 +153,28 @@ class LectureEditor(QMainWindow):
     def showEvent(self, e):
         super().showEvent(e)
         self.edit.setFocus()  # caret visible right away
+        if self.polish_cb.isChecked():
+            self._set_polish(True)
+
+    # ------------------------------------------------------------------ AI normalization switch
+    def _set_polish(self, on):
+        self.store.set("lecture_polish", bool(on))
+        if on:
+            self.polish_status.setText("טוען מודל AI… (בפעם הראשונה עד דקה)")
+            self.ensure_llm(on_ready=self.bridge.llm_ready.emit)
+        else:
+            self.polish_status.setText("")
+            self.ensure_llm()  # frees the model if nothing else uses it
+
+    def _on_llm_ready(self, ok):
+        if not self.polish_cb.isChecked():
+            return
+        if ok:
+            self.polish_status.setText("מודל AI פעיל — כל קטע מנורמל")
+        else:
+            self.polish_status.setText("לא ניתן לטעון את מודל ה-AI (הורד אותו: setup_models.py --llm)")
+            self.polish_cb.blockSignals(True); self.polish_cb.setChecked(False); self.polish_cb.blockSignals(False)
+            self.store.set("lecture_polish", False)
 
     # ------------------------------------------------------------------ layout
     def _header(self):
@@ -225,6 +250,17 @@ class LectureEditor(QMainWindow):
         for b in (self.start_btn, self.stop_btn, self.mark_btn):
             v.addWidget(b)
         self.status = QLabel(""); self.status.setWordWrap(True); v.addWidget(self.status)
+        v.addSpacing(8)
+        from PySide6.QtWidgets import QCheckBox
+        self.polish_cb = QCheckBox("נרמול הטקסט עם מודל AI מקומי")
+        self.polish_cb.setToolTip("כל קטע של 30 שניות עובר ניקוי: פיסוק, חזרות, מונחים.\n"
+                                  "המודל לא מוסיף תוכן ולא משנה מספרים; אם הוא נכשל — נשאר הטקסט המקורי.\n"
+                                  "מוסיף כמה שניות לכל קטע ומשתמש ב-GPU.")
+        self.polish_cb.setChecked(bool(self.store.get("lecture_polish")))
+        self.polish_cb.toggled.connect(self._set_polish)
+        v.addWidget(self.polish_cb)
+        self.polish_status = QLabel(""); self.polish_status.setStyleSheet("color:#777; font-size:11px;")
+        v.addWidget(self.polish_status)
         v.addStretch(1)
         hint = QLabel("הטקסט נוסף בסוף המסמך — אפשר לערוך ולהוסיף הערות בכל מקום בזמן ההקלטה.\n"
                       "עמידה עם העכבר על מילה מציגה מתי היא נאמרה.\n"
@@ -346,11 +382,11 @@ class LectureEditor(QMainWindow):
             normal.setForeground(QBrush(QColor("#222"))); normal.setBackground(QBrush(Qt.NoBrush))
             self.edit.setCurrentCharFormat(normal)
 
-    def _fmt(self, color=None, size=None, bold=False, bg=None, ts=None):
+    def _fmt(self, color=None, size=None, bold=False, bg=None, ts=None, polished=None):
         f = QTextCharFormat()
         f.setProperty(self.LIVE, True)
-        if ts:
-            f.setToolTip(f"נאמר ב-{ts}")  # shown on hover; never part of the text or the Word export
+        if ts:  # shown on hover; never part of the text or the Word export
+            f.setToolTip(f"נאמר ב-{ts}" + (" · נורמל ע״י AI" if polished else ""))
         f.setFontPointSize(size or 12)
         f.setFontWeight(QFont.Bold if bold else QFont.Normal)
         f.setForeground(QBrush(color) if color else QBrush(QColor("#222")))
@@ -360,7 +396,7 @@ class LectureEditor(QMainWindow):
     def _on_event(self, ev):
         t = ev.get("type")
         if t == "segment":
-            self._append([(ev["text"], self._fmt(ts=ev["ts"]))])
+            self._append([(ev["text"], self._fmt(ts=ev["ts"], polished=ev.get("polished")))])
         elif t == "mark":
             self._append([(f"⭐ {ev['text']}", self._fmt(bold=True, bg=HIGHLIGHT, ts=ev["ts"]))])
         elif t == "info":

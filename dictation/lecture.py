@@ -2,11 +2,11 @@
 
 Flow
   mic (always on during the lecture) ─► audio file on disk (FLAC, crash-safe)
-                                    └► segmenter: Silero VAD finds natural pauses; cut every ~5–15 s (25 s max)
+                                    └► segmenter: a chunk every ~30 s regardless of pauses (cut on a breath if any)
                                          └► Whisper (shared single-thread ASR pool, so dictation and lecture never
                                             run concurrently) with prompt = lecture terms + tail of previous text
-                                              └► cleanup + dictionary ─► transcript.md on disk (append + fsync)
-                                                                      └► listeners (the editor window)
+                                              └► cleanup + dictionary ─► optional local-LLM normalization (guarded)
+                                                   └► transcript.md on disk (append + fsync) ─► listeners (editor)
 """
 from __future__ import annotations
 
@@ -34,39 +34,54 @@ def fmt_ts(sec: float) -> str:
 
 
 class Segmenter:
-    """Cuts a growing audio buffer at natural pauses using Silero VAD (bundled with faster-whisper)."""
+    """Fixed ~30 s chunks, whether or not the speaker pauses (Silero VAD only picks a clean cut point).
 
-    MIN_S, MAX_S, PAUSE_S = 2.0, 25.0, 0.7
+    Whisper reads exactly 30 s at a time, so chunks of up to 29.5 s give it the most context. Inside the last few
+    seconds of each chunk the cut lands on the latest breath / short silence, so words are not split; if there is
+    none, it is a hard cut at 29.5 s. Silence-only chunks are dropped from the text (the audio file keeps them).
+    """
 
-    def __init__(self):
+    WINDOW = 8.0   # look for a cut point within the last 8 s before the target
+
+    def __init__(self, chunk_s: float = 30.0):
         from faster_whisper.vad import VadOptions, get_speech_timestamps
+        self.target = min(float(chunk_s), 29.5)
         self._get = get_speech_timestamps
-        self._opts = VadOptions(threshold=0.45, min_speech_duration_ms=200, min_silence_duration_ms=400,
-                                speech_pad_ms=150)
+        self._opts = VadOptions(threshold=0.45, min_speech_duration_ms=150, min_silence_duration_ms=120,
+                                speech_pad_ms=60)
 
     def cut(self, buf: np.ndarray) -> tuple[int, bool]:
         """Return (cut_sample, has_speech). cut 0 = wait for more audio."""
         n = len(buf)
-        if n < self.MIN_S * SR:
+        lo = int((self.target - self.WINDOW) * SR)
+        if n < lo + 2 * SR:
             return 0, False
         ts = self._get(buf, self._opts)
         if not ts:
-            return (n, False) if n > 12 * SR else (0, False)  # long silence: drop it from the text pipeline
-        last_end = ts[-1]["end"]
-        if n - last_end >= self.PAUSE_S * SR and last_end >= 1.0 * SR:
-            return min(n, last_end + int(0.25 * SR)), True
-        if n >= self.MAX_S * SR:  # nobody paused: cut at the widest gap after 8 s, else hard cut
-            gaps = [(ts[i + 1]["start"] - ts[i]["end"], ts[i]["end"]) for i in range(len(ts) - 1)
-                    if ts[i]["end"] > 8 * SR]
-            return ((max(gaps)[1] + int(0.1 * SR)) if gaps else n), True
+            return (n, False) if n >= self.target * SR else (0, False)
+        # cut points: every silence between speech regions (and the trailing one) as (length, middle)
+        gaps = [(ts[i + 1]["start"] - ts[i]["end"], (ts[i]["end"] + ts[i + 1]["start"]) // 2)
+                for i in range(len(ts) - 1)]
+        if n - ts[-1]["end"] >= int(0.15 * SR):
+            gaps.append((n - ts[-1]["end"], (ts[-1]["end"] + n) // 2))
+        cand = [g for g in gaps if g[1] >= lo]
+        # prefer the LONGEST pause in the window (usually a sentence end), later one on ties
+        best = max(cand, key=lambda g: (g[0] // int(0.1 * SR), g[1]))[1] if cand else 0
+        if n >= self.target * SR:                       # time's up: best clean point, else hard cut
+            return (best or n), True
+        if cand and n - ts[-1]["end"] >= int(0.6 * SR) and n >= (self.target - 3) * SR:
+            return (ts[-1]["end"] + n) // 2, True       # close to the target and the speaker just paused
         return 0, False
 
 
 class LectureSession:
     def __init__(self, folder: Path, title: str, terms: list[str], submit, base_dict: dict[str, list[str]],
-                 on_event, on_error):
+                 on_event, on_error, chunk_s: float = 30.0, get_llm=None, polish_on=None):
         self.folder, self.title, self.terms = folder, title, terms
         self.submit, self.on_event, self.on_error = submit, on_event, on_error
+        self.chunk_s = chunk_s
+        self.get_llm = get_llm or (lambda: None)        # → LLMPolisher or None
+        self.polish_on = polish_on or (lambda: False)   # read per chunk: the switch can change mid-lecture
         self.base_dict = base_dict
         self.dictionary = self._make_dict()
         self.started = time.time()
@@ -123,7 +138,7 @@ class LectureSession:
 
     # ------------------------------------------------------------------ audio → segments
     def _worker(self):
-        seg = Segmenter()
+        seg = Segmenter(self.chunk_s)
         buf = np.zeros(0, np.float32)
         offset = 0  # sample index (since start) of buf[0]
         last_check = 0.0
@@ -164,11 +179,24 @@ class LectureSession:
                 prompt = (prompt + ". " if prompt else "") + self._prev_text[-200:]
             r = self.engine.transcribe(audio, prompt=prompt or None)
             text = process(r.text, "clean", self.dictionary) if r.text else ""
+            polished = None
+            if text and self.polish_on():
+                llm = self.get_llm()
+                if llm is not None:
+                    # same guard as dictation: rejected / over budget → the Whisper text is kept unchanged
+                    # a chunk arrives every ~30 s, so the model can take far longer than in dictation
+                    budget = min(22.0, max(8.0, 0.35 * len(text.split())))
+                    # only this lecture's terms: the personal dictionary was already applied deterministically,
+                    # and dozens of unrelated terms in the prompt make the model drop real tokens (measured)
+                    p = llm.polish(text, "lecture", list(self.terms), budget=budget)
+                    log.info("lecture polish %s (%s) %.1fs", "accepted" if p.accepted else "rejected", p.reason, p.gen_s)
+                    polished = p.accepted
+                    text = p.text
             if text:
                 self._prev_text = text
                 ts = fmt_ts(start_s)
                 self._md.write(f"[{ts}] {text}\n\n"); self._md.flush(); os.fsync(self._md.fileno())
-                self.on_event({"type": "segment", "ts": ts, "text": text})
+                self.on_event({"type": "segment", "ts": ts, "text": text, "polished": polished})
         except Exception as e:
             log.exception("lecture segment failed")
             self.on_error(str(e))
@@ -197,8 +225,9 @@ class LectureSession:
 class LectureController:
     """Owns the current session and fans its events out to listeners (the editor window)."""
 
-    def __init__(self, store, get_engine, submit, base_dir: Path, notify):
+    def __init__(self, store, get_engine, submit, base_dir: Path, notify, get_llm=None):
         self.store, self.get_engine, self.submit, self.base_dir, self.notify = store, get_engine, submit, base_dir, notify
+        self.get_llm = get_llm or (lambda: None)
         self.session: LectureSession | None = None
         self.listeners: list = []          # callables(event) — called from worker threads
         self._seq = 0
@@ -220,7 +249,9 @@ class LectureController:
         terms = self.store.get("lecture_terms") or []
         safe = re.sub(r'[\\/:*?"<>|]+', "_", title)[:60]
         folder = self.base_dir / f"{datetime.now():%Y-%m-%d_%H%M} {safe}"
-        s = LectureSession(folder, title, terms, self.submit, base_dict or {}, self._emit, self._on_error)
+        s = LectureSession(folder, title, terms, self.submit, base_dict or {}, self._emit, self._on_error,
+                           chunk_s=float(self.store.get("lecture_chunk_s") or 30),
+                           get_llm=self.get_llm, polish_on=lambda: bool(self.store.get("lecture_polish")))
         s.engine = engine
         s.start()
         self.session = s
