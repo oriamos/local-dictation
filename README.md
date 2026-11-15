@@ -1,14 +1,16 @@
 # Local Dictation
 
-Offline Hebrew + English voice typing for Windows. Hold a key, speak, release: the text appears at your cursor in any app.
-Nothing leaves your machine.
+Offline Hebrew + English voice typing for Windows and macOS. Hold a key, speak, release: the text appears at your cursor
+in any app. Nothing leaves your machine.
 
-Built for Intel laptops without NVIDIA: it runs [ivrit.ai](https://www.ivrit.ai)'s Hebrew Whisper on the Intel Arc iGPU via OpenVINO,
-about **10× faster than CPU**.
+Runs [ivrit.ai](https://www.ivrit.ai)'s Hebrew Whisper on your laptop's built-in GPU: Intel Arc via OpenVINO on Windows,
+Apple Silicon via MLX on macOS. About **10× faster than CPU**, no NVIDIA needed.
+
+> **macOS support is new and not yet tested on real hardware.** Windows is tested daily. Mac reports welcome.
 
 ## Performance
 
-Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RESULTS.md)):
+Windows, Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RESULTS.md)):
 
 | Engine | Latency after speech | Hebrew WER |
 |---|---|---|
@@ -29,37 +31,55 @@ Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RESULTS.md))
 
 ## Requirements
 
-- Windows 11, Python 3.12
-- Intel Core Ultra / Arc recommended. Without an Intel GPU it falls back to CPU (accurate, ~5 s).
-- ~6 GB disk (+6 GB for the optional LLM)
+| | Windows | macOS |
+|---|---|---|
+| OS | Windows 11 | macOS 13+ |
+| Python | 3.12 | 3.12 |
+| Fast path | Intel Core Ultra / Arc (OpenVINO) | Apple Silicon M1+ (MLX) |
+| Fallback | CPU, ~5 s | CPU on Intel Macs |
+
+~6 GB disk, +6 GB for the optional LLM.
 
 ## Install
 
+**Windows**
 ```
 git clone https://github.com/oriamos/local-dictation
 cd local-dictation
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python scripts\setup_models.py        # one-time download + conversion
+.venv\Scripts\python scripts\setup_models.py
 ```
 
-Add `--llm` to also download the optional polish model.
+**macOS**
+```
+git clone https://github.com/oriamos/local-dictation
+cd local-dictation
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python scripts/setup_models.py
+```
+Then grant **Accessibility**, **Input Monitoring** and **Microphone** to the app that runs Python
+(System Settings → Privacy & Security). The app also prompts for them on first start.
+
+Add `--llm` to the setup command to download the optional polish model.
 
 ## Usage
 
-Double-click **`Local Dictation.lnk`**. A mic icon appears in the system tray (the menu is in Hebrew).
+Start it with **`Local Dictation.lnk`** (Windows) or **`Local Dictation.command`** (macOS).
+A mic icon appears in the tray / menu bar (the menu is in Hebrew).
 
-| Action | |
-|---|---|
-| Hold **Right Ctrl**, speak, release | dictate |
-| Tap once, tap again | hands-free dictation |
-| **Esc** | cancel |
-| Tray → Hotkey → Pick a hotkey… | choose another key |
-| Tray → Personal dictionary | add terms and how they're misheard |
+| Action | Windows | macOS |
+|---|---|---|
+| Dictate: hold, speak, release | **Right Ctrl** | **Right ⌥ Option** |
+| Hands-free | tap, then tap again | same |
+| Cancel | Esc | Esc |
+| Change the key | Tray → Hotkey → Pick a hotkey… | same |
 
 ## Known limitations
 
-- Windows only. No NVIDIA/CUDA path yet.
+- No NVIDIA/CUDA path yet; no Linux.
+- macOS: untested on hardware so far. Secure Input (password fields, some terminals) blocks dictation by design.
 - Intel's digital mic takes ~0.4 s to wake (shown as "connecting"). Enable the warm-mic option for instant restarts.
 - Live preview updates every ~1.3 s (model limit).
 - The LLM polish adds 2–6 s, so it's off by default.
@@ -68,18 +88,19 @@ Double-click **`Local Dictation.lnk`**. A mic icon appears in the system tray (t
 
 | Path | |
 |---|---|
-| `dictation/` | the app: audio, asr, postprocess, llm, context, inject, hotkey, overlay, storage |
-| `scripts/setup_models.py` | model download/conversion, shortcut |
+| `dictation/` | the app. Platform code in `*_win.py` / `*_mac.py` (hotkey, inject, context); the rest is shared |
+| `scripts/setup_models.py` | model download/conversion, launcher |
 | `bench/` | ASR and LLM benchmarks |
-| `tests/` | smoke tests (`python -m tests.smoke_pipeline`, etc.) |
+| `tests/` | smoke tests (`python -m tests.smoke_pipeline`, `tests.sim_mac_hotkey`, …) |
 | `docs/ARCHITECTURE.md` | design decisions (Hebrew) |
 
-Contributions welcome, especially an NVIDIA engine, macOS/Linux ports, and real-voice test data.
+Contributions welcome, especially macOS testing, an NVIDIA engine, and real-voice test data.
 
 ## License
 
 Code: MIT. Models are downloaded separately under their own licenses:
-[ivrit-ai Whisper](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo) (Apache-2.0),
+[ivrit-ai Whisper](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo) (Apache-2.0) and its
+[MLX conversion](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx),
 [ivrit-ai Zipformer](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he) by Yakov Kolani (CC-BY-4.0),
-[Gemma 4 E4B OpenVINO](https://huggingface.co/OpenVINO/gemma-4-E4B-it-int4-ov) (Apache-2.0).
-Built on OpenVINO, faster-whisper, sherpa-onnx, Silero VAD and PySide6 (LGPL-3.0).
+Gemma 4 E4B ([OpenVINO](https://huggingface.co/OpenVINO/gemma-4-E4B-it-int4-ov) / [MLX](https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit), Apache-2.0).
+Built on OpenVINO, MLX, faster-whisper, sherpa-onnx, Silero VAD, PyObjC and PySide6 (LGPL-3.0).

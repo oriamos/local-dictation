@@ -191,7 +191,33 @@ class StreamingPreview:
                     self.on_partial(text)
 
 
+class MLXEngine(_Base):
+    """mlx-whisper on Apple Silicon (Metal GPU, unified memory). Model: ivrit-ai turbo converted to MLX.
+    UNTESTED ON REAL HARDWARE: written against mlx-whisper 0.4; please report issues."""
+
+    def __init__(self, model: str = "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx"):
+        super().__init__()
+        self.model = model
+        self.name = f"mlx:{model.split('/')[-1]}"
+
+    def load(self):
+        import mlx_whisper  # noqa: F401  (imported here so Windows never needs it)
+        t0 = time.perf_counter()
+        self.warmup()  # first call downloads/loads the weights and compiles Metal kernels
+        self.load_s = time.perf_counter() - t0
+
+    def _decode(self, speech, prompt):
+        import mlx_whisper
+        r = mlx_whisper.transcribe(speech.astype(np.float32), path_or_hf_repo=self.model, language="he",
+                                   task="transcribe", condition_on_previous_text=False, initial_prompt=prompt or None,
+                                   without_timestamps=True, fp16=True, verbose=None)
+        return str(r.get("text", ""))
+
+
 def make_engine(spec: dict) -> _Base:
-    if spec.get("backend") == "openvino":
+    backend = spec.get("backend")
+    if backend == "openvino":
         return OpenVINOEngine(spec["model_dir"], spec.get("device", "GPU"), spec.get("beam", 1))
+    if backend == "mlx":
+        return MLXEngine(spec.get("model", MLXEngine.__init__.__defaults__[0]))
     return WhisperEngine(spec["model"], spec.get("threads", 8), spec.get("beam", 1))

@@ -1,13 +1,24 @@
-# app
-openvino-genai>=2026.0   # primary engine: ivrit Whisper + optional LLM on Intel GPU/NPU
+# app (all platforms)
 faster-whisper>=1.2      # CPU fallback (CTranslate2) + bundled Silero VAD
 sherpa-onnx>=2.0         # optional live preview (ivrit-ai Zipformer streaming)
 sounddevice>=0.5
 numpy>=2
 psutil>=6
-PySide6-Essentials>=6.8  # tray, overlay, dialogs (Qt; no Chromium/Electron)
-comtypes>=1.4            # UI Automation (password-field detection)
+PySide6-Essentials>=6.8  # tray / menu bar, overlay, dialogs (Qt; no Chromium/Electron)
 huggingface_hub>=0.30    # model setup / cache
+
+# Windows: Intel GPU/NPU engine + UI Automation
+openvino-genai>=2026.0; sys_platform == "win32"
+comtypes>=1.4; sys_platform == "win32"
+
+# macOS: Quartz event tap, pasteboard, Accessibility; MLX engines on Apple Silicon
+pyobjc-framework-Quartz>=11; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=11; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices>=11; sys_platform == "darwin"
+pyobjc-framework-AVFoundation>=11; sys_platform == "darwin"
+mlx-whisper>=0.4; sys_platform == "darwin" and platform_machine == "arm64"
+mlx-lm>=0.30; sys_platform == "darwin" and platform_machine == "arm64"
+
 # benchmark
 soundfile>=0.12
 jiwer>=3

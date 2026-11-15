@@ -6,18 +6,21 @@ WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW set natively, shown with
 from __future__ import annotations
 
 import ctypes
+import sys
 from collections import deque
 
 from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
+MAC = sys.platform == "darwin"
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_LAYERED = 0x08000000, 0x20, 0x80, 0x8, 0x80000
-user32 = ctypes.WinDLL("user32")
-user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
-user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+if not MAC:
+    user32 = ctypes.WinDLL("user32")
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
 
 COLORS = {"recording": QColor("#ff4d4f"), "processing": QColor("#f5a623"), "error": QColor("#ff4d4f"),
           "info": QColor("#52c41a"), "streaming": QColor("#ff4d4f"), "connecting": QColor("#8a8f98")}
@@ -31,6 +34,8 @@ class Overlay(QWidget):
                          Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        if MAC:
+            self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)  # tool windows hide when the app is inactive
         self.resize(self.W, self.H)
         self.state, self.text = "idle", ""
         self.levels = deque([0.0] * 28, maxlen=28)
@@ -40,6 +45,8 @@ class Overlay(QWidget):
         self.enabled = True
 
     def _native(self):
+        if MAC:
+            return  # Qt flags + WA_MacAlwaysShowToolWindow are enough; app is menu-bar only (never active)
         hwnd = int(self.winId())
         ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED)

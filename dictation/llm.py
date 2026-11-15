@@ -155,8 +155,11 @@ class LLMPolisher:
         self.model_dir, self.device, self.budget_s, self.budget_per_word = model_dir, device, budget_s, budget_per_word
         self.pipe = None
         self.is_qwen = "qwen" in model_dir.lower()
+        self.mlx = device.upper() == "MLX"  # Apple Silicon: model_dir is an mlx-community repo id
 
     def load(self):
+        if self.mlx:
+            return self._load_mlx()
         import openvino_genai as ov_genai
         from pathlib import Path
         t0 = time.perf_counter()
@@ -188,14 +191,43 @@ class LLMPolisher:
         except TypeError:
             return tok.apply_chat_template(history, add_generation_prompt=True)
 
-    def polish(self, text: str, mode: str, terms: list[str] | None = None) -> Polish:
-        import openvino_genai as ov_genai
+    # ------------------------------------------------------------------ MLX (macOS, Apple Silicon)
+    # UNTESTED ON REAL HARDWARE: written against mlx-lm 0.32; please report issues.
+    def _load_mlx(self):
+        from mlx_lm import load
         t0 = time.perf_counter()
+        self.model, self.tok = load(self.model_dir)
+        self.load_s = time.perf_counter() - t0
+        self.polish("בדיקה אחת שתיים שלוש", "clean")
+
+    def _polish_mlx(self, text, mode, terms, t0, budget):
+        from mlx_lm import stream_generate
+        user = self._user(text, mode, terms)
+        try:
+            prompt = self.tok.apply_chat_template([{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+                                                  add_generation_prompt=True, tokenize=False)
+        except Exception:  # templates without a system role: fold it into the user turn
+            prompt = self.tok.apply_chat_template([{"role": "user", "content": SYSTEM + "\n\n" + user}],
+                                                  add_generation_prompt=True, tokenize=False)
+        out, cancelled = "", False
+        for r in stream_generate(self.model, self.tok, prompt, max_tokens=int(len(text) * 0.9) + 40):  # greedy
+            out += r.text
+            if time.perf_counter() - t0 > budget:
+                cancelled = True
+                break
+        return out, cancelled
+
+    def polish(self, text: str, mode: str, terms: list[str] | None = None) -> Polish:
+        t0 = time.perf_counter()
+        budget = max(self.budget_s, self.budget_per_word * len(text.split()))
+        if self.mlx:
+            out, cancelled = self._polish_mlx(text, mode, terms, t0, budget)
+            return self._finish(text, mode, terms, out, cancelled, t0, budget)
+        import openvino_genai as ov_genai
         cfg = ov_genai.GenerationConfig()
         cfg.max_new_tokens = int(len(text) * 0.9) + 40  # Hebrew ≈ 2–3 chars/token; generous but bounded
         cfg.do_sample = False
         cancelled = [False]
-        budget = max(self.budget_s, self.budget_per_word * len(text.split()))
 
         def streamer(_sub):
             if time.perf_counter() - t0 > budget:
@@ -214,10 +246,13 @@ class LLMPolisher:
             cfg.apply_chat_template = False  # already applied in _prompt
             res = self.pipe.generate(self._prompt(text, mode, terms), cfg, streamer)
         out = str(res.texts[0] if hasattr(res, "texts") else res)
+        return self._finish(text, mode, terms, out, cancelled[0], t0, budget)
+
+    def _finish(self, text, mode, terms, out, cancelled, t0, budget) -> Polish:
         out = re.sub(r"<think>.*?</think>", "", out, flags=re.S)
         out = re.sub(r"</?dictation>", "", out).strip().strip('"').strip()
         gen_s = time.perf_counter() - t0
-        if cancelled[0]:
+        if cancelled:
             return Polish(text, False, f"over budget {budget:.1f}s", gen_s, out)
         ok, why = guard(text, out, mode, terms)
         return Polish(out if ok else text, ok, why, gen_s, out)

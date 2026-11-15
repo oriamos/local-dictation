@@ -6,7 +6,6 @@ Any failure after recording keeps the text (tray: "Copy last transcription") and
 """
 from __future__ import annotations
 
-import ctypes
 import logging
 import sys
 import threading
@@ -19,10 +18,11 @@ from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPixma
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, QMenu, QPushButton,
                                QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QLabel)
 
-from . import context, inject
+from . import context, inject, platform_util
+from .platform_util import autostart_enabled, set_autostart
 from .asr import StreamingPreview, make_engine
 from .audio import Recorder
-from .hotkey import KEY_LABELS, VK_NAMES, HotkeyHook, label as hotkey_label, spec_from_combo
+from .hotkey import DIALOG_HINT, KEY_LABELS, MODIFIERS, VK_NAMES, HotkeyHook, label as hotkey_label, spec_from_combo
 from .overlay import Overlay
 from .postprocess import Dictionary, process
 from .storage import APP_DIR, Store
@@ -60,8 +60,7 @@ class HotkeyDialog(QDialog):
         self.app, self.held, self.peak, self.spec = app, set(), set(), None
         self.setWindowTitle("בחירת מקש קיצור"); self.setLayoutDirection(Qt.RightToLeft); self.resize(460, 220)
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("לחץ על המקש (או צירוף המקשים) שתרצה להחזיק בזמן ההכתבה, ושחרר.\n"
-                             "מתאים: Right Ctrl, Right Alt, מקש Copilot, Caps Lock, F13–F24, או צירוף כמו Ctrl + Win."))
+        lay.addWidget(QLabel("לחץ על המקש (או צירוף המקשים) שתרצה להחזיק בזמן ההכתבה, ושחרר.\n" + DIALOG_HINT))
         self.show_lbl = QLabel("— ממתין ללחיצה —"); f = self.show_lbl.font(); f.setPointSize(16); f.setBold(True)
         self.show_lbl.setFont(f); self.show_lbl.setAlignment(Qt.AlignCenter); lay.addWidget(self.show_lbl)
         self.cur = QLabel(f"המקש הנוכחי: {hotkey_label(app.store.get('hotkey'))}"); lay.addWidget(self.cur)
@@ -137,6 +136,7 @@ class App:
     def __init__(self):
         self.qt = QApplication(sys.argv)
         self.qt.setQuitOnLastWindowClosed(False)
+        platform_util.prepare_app()
         self.store = Store()
         self.dict = Dictionary(self.store.dictionary())
         self.b = Bridge()
@@ -178,6 +178,12 @@ class App:
         threading.Thread(target=self._load_model, daemon=True).start()
         threading.Thread(target=context.warm_uia, daemon=True).start()
         log.info("hotkey hook installed: %s (%s)", self.store.get("hotkey"), self.store.get("activation"))
+        missing = context.missing_permissions()
+        if missing:  # macOS: Accessibility / Input Monitoring / Microphone
+            log.warning("missing permissions: %s", ", ".join(missing))
+            self.tray.showMessage("Local Dictation — נדרשות הרשאות",
+                                  "אשר ב-System Settings → Privacy & Security: " + ", ".join(missing) +
+                                  " — ואז הפעל מחדש את האפליקציה.", QSystemTrayIcon.Warning, 15000)
         if self.store.get("live_preview"):
             threading.Thread(target=self._load_preview, daemon=True).start()
         if self.store.get("llm")["enabled"]:
@@ -356,7 +362,7 @@ class App:
 
     def on_other(self):
         # Hotkey was part of a shortcut (e.g. Right Ctrl + C): drop the recording silently.
-        if self.recording and self.store.get("activation") == "ptt" and self.hook.keys & {0x11, 0xA2, 0xA3, 0x12, 0xA4, 0xA5, 0x5B, 0x5C}:
+        if self.recording and self.store.get("activation") == "ptt" and self.hook.keys & MODIFIERS:
             self.cancel(silent=True)
 
     def on_escape(self):
@@ -516,44 +522,11 @@ class App:
         return self.qt.exec()
 
 
-# ---------------------------------------------------------------------- autostart (HKCU Run)
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-
-def _cmd():
-    import os
-    exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    launcher = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "launch.pyw")
-    return f'"{exe}" "{launcher}"'
-
-
-def autostart_enabled():
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            return bool(winreg.QueryValueEx(k, "LocalDictation")[0])
-    except OSError:
-        return False
-
-
-def set_autostart(on):
-    import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
-        if on:
-            winreg.SetValueEx(k, "LocalDictation", 0, winreg.REG_SZ, _cmd())  # launch.pyw sets its own cwd
-        else:
-            try:
-                winreg.DeleteValue(k, "LocalDictation")
-            except OSError:
-                pass
-
-
 def main():
     APP_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=APP_DIR / "app.log", level=logging.INFO, encoding="utf-8",
                         format="%(asctime)s %(levelname)s %(message)s")  # never logs transcript text
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "LocalDictation.SingleInstance")
-    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+    if not platform_util.single_instance():
         return 0
-    ctypes.windll.shcore.SetProcessDpiAwareness(2) if hasattr(ctypes.windll, "shcore") else None
+    platform_util.prepare_process()
     return App().run()

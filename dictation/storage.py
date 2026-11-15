@@ -1,23 +1,28 @@
 """Settings, personal dictionary and optional history in one local SQLite file.
 
-Location: %APPDATA%\\LocalDictation\\dictation.db. Nothing leaves the machine.
+Location: %APPDATA%/LocalDictation (Windows), ~/Library/Application Support/LocalDictation (macOS).
 """
 from __future__ import annotations
 
 import json
 import os
+import platform
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
 
-APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LocalDictation"
+MAC = sys.platform == "darwin"
+APPLE_SILICON = MAC and platform.machine() == "arm64"
+APP_DIR = (Path.home() / "Library" / "Application Support" / "LocalDictation") if MAC else \
+    Path(os.environ.get("APPDATA", Path.home())) / "LocalDictation"
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Converted OpenVINO models live next to the code (override with LOCALDICTATION_MODELS).
 MODELS_DIR = Path(os.environ.get("LOCALDICTATION_MODELS", PROJECT_DIR / "models"))
 
 DEFAULT_SETTINGS = {
-    "hotkey": "right_ctrl",          # see hotkey.KEY_NAMES; combos like "ctrl+win" allowed
+    "hotkey": "right_option" if MAC else "right_ctrl",  # see hotkey_*.GROUPS; combos like "ctrl+win" allowed
     "activation": "ptt",             # ptt | toggle
     "mic_warm_s": 0,                 # keep the mic open N s after a dictation for instant restart (0 = off)
     "live_preview": False,           # streaming: Zipformer partial text in the overlay while speaking
@@ -25,14 +30,16 @@ DEFAULT_SETTINGS = {
     "auto_profile": True,            # pick mode from the foreground app
     "overlay": True,
     # primary engine; if it fails to load (driver, missing files) the fallback is used automatically
-    "asr_primary": {"backend": "openvino", "device": "GPU",
-                    "model_dir": str(MODELS_DIR / "ivrit-turbo-ov-fp16")},
+    # Windows: OpenVINO on the Intel GPU. Apple Silicon: MLX on the Metal GPU. Intel Mac: CPU (CTranslate2).
+    "asr_primary": ({"backend": "mlx", "model": "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx"} if APPLE_SILICON else
+                    {"backend": "ct2", "model": "ivrit-ai/whisper-large-v3-turbo-ct2", "threads": 8, "beam": 1} if MAC else
+                    {"backend": "openvino", "device": "GPU", "model_dir": str(MODELS_DIR / "ivrit-turbo-ov-fp16")}),
     "asr_fallback": {"backend": "ct2", "model": "ivrit-ai/whisper-large-v3-turbo-ct2", "threads": 8, "beam": 1},
     "use_prompt": True,              # bias Whisper toward dictionary terms
     # optional local-LLM polish (Gemma 4 E4B int4 on the GPU). Off by default: adds ~1.5–6 s.
     # budget: max(budget_s, budget_per_word × words) — past it, generation is cancelled and the text is kept as is.
-    "llm": {"enabled": False, "device": "GPU", "budget_s": 2.5, "budget_per_word": 0.16,
-            "model_dir": str(MODELS_DIR / "gemma-4-E4B-it-int4-ov"),
+    "llm": {"enabled": False, "device": "MLX" if APPLE_SILICON else "GPU", "budget_s": 2.5, "budget_per_word": 0.16,
+            "model_dir": "mlx-community/gemma-4-e4b-it-4bit" if APPLE_SILICON else str(MODELS_DIR / "gemma-4-E4B-it-int4-ov"),
             "professional": True,          # always polish in Professional mode
             "clean_min_words": 25},        # in Clean mode only for long dictations; Verbatim/Developer never
     "history": False,                # opt-in
@@ -45,6 +52,11 @@ DEFAULT_SETTINGS = {
         "winword": "professional", "outlook": "professional",
         "whatsapp": "clean", "whatsapp.root": "clean", "claude": "clean", "chatgpt": "clean",
         "chrome": "clean", "msedge": "clean", "firefox": "clean", "notepad": "clean",
+        # macOS (localized app names, lowercase)
+        "visual studio code": "developer", "terminal": "developer", "iterm2": "developer", "warp": "developer",
+        "xcode": "developer", "ghostty": "developer", "microsoft word": "professional", "pages": "professional",
+        "mail": "professional", "microsoft outlook": "professional", "google chrome": "clean", "safari": "clean",
+        "arc": "clean", "notes": "clean", "slack": "clean", "messages": "clean",
     },
 }
 

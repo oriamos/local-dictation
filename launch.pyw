@@ -1,4 +1,4 @@
-"""Start Local Dictation without a console window (double-click, or used by "Start with Windows").
+"""Start Local Dictation (Windows: no console window; macOS: `.venv/bin/python launch.pyw`).
 Runs from any current directory: the project folder is put on sys.path explicitly.
 """
 import os
@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VENV_PYW = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+VENV_PYW = ROOT / ".venv" / ("bin/python" if sys.platform == "darwin" else "Scripts/pythonw.exe")
 # Double-clicking a .pyw uses the system Python; hand over to the project's environment.
 if VENV_PYW.exists() and Path(sys.prefix).resolve() != (ROOT / ".venv").resolve():
     import subprocess

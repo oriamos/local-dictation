@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import subprocess
 import sys
 import venv
@@ -24,6 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MODELS = Path(os.environ.get("LOCALDICTATION_MODELS", ROOT / "models"))
 CONVENV = ROOT / ".convenv"
+MAC = sys.platform == "darwin"
+APPLE_SILICON = MAC and platform.machine() == "arm64"
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 
@@ -52,7 +55,7 @@ def convert_whisper(weight_format="fp16"):
     out = MODELS / f"ivrit-turbo-ov-{weight_format}"
     if (out / "openvino_encoder_model.xml").exists():
         print(f"   already there: {out}"); return
-    py = converter_python()
+    converter_python()  # creates .convenv on first use
     cli = CONVENV / "Scripts" / "optimum-cli.exe"
     step(f"Converting ivrit-ai/whisper-large-v3-turbo → OpenVINO {weight_format.upper()} (a few minutes)")
     subprocess.check_call([str(cli), "export", "openvino", "--model", "ivrit-ai/whisper-large-v3-turbo",
@@ -83,6 +86,23 @@ def main():
     hf_download("ivrit-ai/whisper-large-v3-turbo-ct2")
     hf_download("ivrit-ai/zipformer2-66m-streaming-he", allow_patterns=["sherpa-onnx/*"])
 
+    if MAC:
+        if APPLE_SILICON:
+            step("Downloading ivrit-ai Whisper turbo for MLX (Apple Silicon GPU)")
+            hf_download("mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx")
+        else:
+            print("   Intel Mac: the CPU engine (CTranslate2) will be used.")
+        if a.llm:
+            if APPLE_SILICON:
+                step("Downloading Gemma 4 E4B (MLX 4-bit) for the optional polish pass")
+                hf_download("mlx-community/gemma-4-e4b-it-4bit")
+            else:
+                print("   --llm needs Apple Silicon on macOS; skipped.")
+        make_command_launcher()
+        print("\nNext: grant Accessibility, Input Monitoring and Microphone to the app that runs Python\n"
+              "(System Settings → Privacy & Security), then double-click 'Local Dictation.command'.")
+        return
+
     convert_whisper("fp16")
     if a.int8:
         convert_whisper("int8")
@@ -95,6 +115,14 @@ def main():
     report_devices()
     make_shortcut()
     print("\nDone. Double-click 'Local Dictation.lnk' (or run:  .venv\\Scripts\\pythonw.exe launch.pyw)")
+
+
+def make_command_launcher():
+    """macOS: 'Local Dictation.command' (double-clickable in Finder) → venv python + launch.pyw."""
+    cmd = ROOT / "Local Dictation.command"
+    cmd.write_text(f'#!/bin/sh\ncd "{ROOT}"\nexec "{sys.executable}" launch.pyw >/dev/null 2>&1 &\n', encoding="utf-8")
+    cmd.chmod(0o755)
+    print(f"   launcher: {cmd}")
 
 
 def make_shortcut():
