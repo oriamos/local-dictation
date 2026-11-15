@@ -46,6 +46,12 @@ text = e.toPlainText()
 blocks = text.split(" ") if " " in text else text.split("\n")
 print("document:\n  " + "\n  ".join(blocks))
 ok_order = blocks[-3].endswith("BFS.") and "⭐" in blocks[-2] and "דייקסטרה" in blocks[-1]
+# times are NOT in the text, but are attached to the words (hover tooltip)
+no_ts_in_text = "00:" not in text
+seg_block = e.document().findBlockByNumber(len(blocks) - 3)
+tip = seg_block.begin().fragment().charFormat().toolTip()
+ok_hover = no_ts_in_text and tip == "נאמר ב-00:00"
+print("times in text:", not no_ts_in_text, "| hover tooltip on first segment:", repr(tip))
 ok_cursor = before == after
 # mark is highlighted
 last = e.document().lastBlock().previous()
@@ -74,4 +80,4 @@ bidi = [p._p.pPr is not None and p._p.pPr.find(qn("w:bidi")) is not None for p i
 print("docx:", [(p.text[:28], "RTL" if b else "LTR") for p, b in zip(paras, bidi)])
 ok_docx = all(bidi[:-1]) and not bidi[-1] and any("דייקסטרה" in p.text for p in paras)
 print(f"order {ok_order} | cursor untouched {ok_cursor} {before}->{after} | mark highlighted {hl} | docx {ok_docx}")
-print("RESULT:", "PASS" if all([ok_order, ok_cursor, hl, ok_docx, ok_typing]) else "FAIL")
+print("RESULT:", "PASS" if all([ok_order, ok_cursor, hl, ok_docx, ok_typing, ok_hover]) else "FAIL")

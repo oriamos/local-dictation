@@ -133,6 +133,18 @@ class LectureEditor(QMainWindow):
         from PySide6.QtCore import QEvent
         if obj is self.edit and ev.type() == QEvent.KeyPress and ev.text() and ev.text().isprintable():
             self._typing_format()
+        elif obj is self.edit.viewport() and ev.type() == QEvent.ToolTip:
+            from PySide6.QtWidgets import QToolTip
+            c = self.edit.cursorForPosition(ev.pos())
+            tip = ""
+            if not c.atBlockEnd():  # the character under the mouse, not the one before it
+                c.movePosition(QTextCursor.NextCharacter)
+                tip = c.charFormat().toolTip()
+            if tip:
+                QToolTip.showText(ev.globalPos(), tip, self.edit.viewport())
+            else:
+                QToolTip.hideText()
+            return True
         return super().eventFilter(obj, ev)
 
     def showEvent(self, e):
@@ -215,6 +227,7 @@ class LectureEditor(QMainWindow):
         self.status = QLabel(""); self.status.setWordWrap(True); v.addWidget(self.status)
         v.addStretch(1)
         hint = QLabel("הטקסט נוסף בסוף המסמך — אפשר לערוך ולהוסיף הערות בכל מקום בזמן ההקלטה.\n"
+                      "עמידה עם העכבר על מילה מציגה מתי היא נאמרה.\n"
                       "מקש ההכתבה מסמן רגע חשוב.\nהשמע, התמלול והמסמך נשמרים אוטומטית.")
         hint.setWordWrap(True); hint.setStyleSheet("color:#888; font-size:11px;"); v.addWidget(hint)
         folder_btn = QPushButton("פתח תיקיית הרצאה"); folder_btn.clicked.connect(self._open_folder); v.addWidget(folder_btn)
@@ -236,6 +249,7 @@ class LectureEditor(QMainWindow):
         self.edit.setLayoutDirection(Qt.RightToLeft)
         self.edit.textChanged.connect(lambda: setattr(self, "_dirty", True))
         self.edit.installEventFilter(self)  # reset live formatting right before each typed character
+        self.edit.viewport().installEventFilter(self)  # hover → "said at" time of the word under the mouse
         self.edit.cursorPositionChanged.connect(self._sync_format_buttons)
         h.addWidget(self.edit, 6)
         h.addStretch(1)
@@ -327,14 +341,16 @@ class LectureEditor(QMainWindow):
         """Typing right after a timestamp / ⭐ line must not inherit its gray/bold/highlight look."""
         c = self.edit.textCursor()
         if not c.hasSelection() and self.edit.currentCharFormat().property(self.LIVE):
-            normal = QTextCharFormat()
+            normal = QTextCharFormat()  # also drops the time tooltip: your own notes have no "said at" time
             normal.setFontPointSize(12); normal.setFontWeight(QFont.Normal)
             normal.setForeground(QBrush(QColor("#222"))); normal.setBackground(QBrush(Qt.NoBrush))
             self.edit.setCurrentCharFormat(normal)
 
-    def _fmt(self, color=None, size=None, bold=False, bg=None):
+    def _fmt(self, color=None, size=None, bold=False, bg=None, ts=None):
         f = QTextCharFormat()
         f.setProperty(self.LIVE, True)
+        if ts:
+            f.setToolTip(f"נאמר ב-{ts}")  # shown on hover; never part of the text or the Word export
         f.setFontPointSize(size or 12)
         f.setFontWeight(QFont.Bold if bold else QFont.Normal)
         f.setForeground(QBrush(color) if color else QBrush(QColor("#222")))
@@ -344,11 +360,11 @@ class LectureEditor(QMainWindow):
     def _on_event(self, ev):
         t = ev.get("type")
         if t == "segment":
-            self._append([(f"[{ev['ts']}] ", self._fmt(GRAY_TS, 9)), (ev["text"], self._fmt())])
+            self._append([(ev["text"], self._fmt(ts=ev["ts"]))])
         elif t == "mark":
-            self._append([(f"⭐ {ev['text']} [{ev['ts']}]", self._fmt(bold=True, bg=HIGHLIGHT))])
+            self._append([(f"⭐ {ev['text']}", self._fmt(bold=True, bg=HIGHLIGHT, ts=ev["ts"]))])
         elif t == "info":
-            self._append([(f"[{ev['ts']}] {ev['text']}", self._fmt(GRAY_TS, 9))])
+            self._append([(ev["text"], self._fmt(GRAY_TS, 9, ts=ev["ts"]))])
             if ev["text"] == "סוף ההקלטה":
                 self.save_draft(force=True)
         self._sync_state()
