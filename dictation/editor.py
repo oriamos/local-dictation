@@ -36,20 +36,51 @@ QMainWindow {{ background: {CANVAS}; }}
 #header QLabel {{ color: white; font-size: 13px; }}
 #recdot {{ color: #ff6b6b; font-size: 14px; }}
 #toolbar {{ background: {TOOLBAR}; border-bottom: 1px solid {BORDER}; }}
-#toolbar QToolButton {{ border: 1px solid transparent; border-radius: 2px; padding: 3px 6px; min-width: 22px;
-                       font-size: 13px; color: #333; background: transparent; }}
-#toolbar QToolButton:hover {{ background: #e0e0e0; border-color: #d0d0d0; }}
-#toolbar QToolButton:checked {{ background: #cbcbcb; border-color: #bdbdbd; }}
-#toolbar QComboBox {{ min-width: 52px; padding: 1px 4px; }}
+#toolbar QToolButton {{ border: 1px solid transparent; border-radius: 3px; padding: 3px 7px; min-width: 22px;
+                       font-size: 13px; color: #2b2b2b; background: transparent; }}
+#toolbar QToolButton:hover {{ background: #e3e3e3; border-color: #c8c8c8; }}
+#toolbar QToolButton:pressed, #toolbar QToolButton:checked {{ background: #cbcbcb; border-color: #b5b5b5; }}
+#toolbar QComboBox {{ min-width: 52px; padding: 2px 6px; color: #222; background: white;
+                     border: 1px solid #c4c4c4; border-radius: 3px; }}
+#toolbar QComboBox QAbstractItemView {{ color: #222; background: white; selection-background-color: #d6e4f5;
+                                       selection-color: #222; }}
 #sep {{ background: {BORDER}; }}
 #side {{ background: {TOOLBAR}; border-left: 1px solid {BORDER}; }}
 #side QLabel {{ color: #555; }}
-#page {{ background: white; border: 1px solid #bebebe; }}
-QPushButton#rec {{ background: #d9534f; color: white; border: 1px solid #c9302c; border-radius: 3px; padding: 6px; }}
-QPushButton#rec:disabled {{ background: #e9a5a3; border-color: #e9a5a3; }}
-QPushButton#mark {{ background: #fff3a0; border: 1px solid #e0c800; border-radius: 3px; padding: 6px; }}
-QPushButton {{ padding: 6px; }}
+QLineEdit, QPlainTextEdit {{ color: #222; background: white; border: 1px solid #c4c4c4; border-radius: 3px;
+                             padding: 4px; selection-background-color: #b9d3f2; selection-color: #111; }}
+QLineEdit:disabled {{ color: #888; background: #f0f0f0; }}
+#page {{ color: #222; background: white; border: 1px solid #bebebe;
+         selection-background-color: #b9d3f2; selection-color: #111; }}
+QPushButton {{ color: #222; background: white; border: 1px solid #b9b9b9; border-radius: 3px; padding: 7px; }}
+QPushButton:hover {{ background: #eeeeee; border-color: #9e9e9e; }}
+QPushButton:pressed {{ background: #dddddd; }}
+QPushButton:disabled {{ color: #a0a0a0; background: #ececec; border-color: #d6d6d6; }}
+QPushButton#rec {{ background: #d9534f; color: white; border: 1px solid #c9302c; font-weight: bold; }}
+QPushButton#rec:hover {{ background: #c9302c; }}
+QPushButton#rec:disabled {{ background: #ecbdbc; color: #fff; border-color: #ecbdbc; }}
+QPushButton#mark {{ background: #fff3a0; border: 1px solid #d9c000; font-weight: bold; }}
+QPushButton#mark:hover {{ background: #ffe866; }}
+QPushButton#mark:disabled {{ background: #f6f1d0; color: #b8b08a; border-color: #e6e0b8; }}
+QToolTip {{ color: #222; background: #ffffe8; border: 1px solid #c8c8a0; }}
 """
+
+
+def _light_palette():
+    """The editor is a white-page document editor: keep it light even when Windows/macOS is in dark mode
+    (otherwise the caret and typed text are drawn white on the white page)."""
+    from PySide6.QtGui import QPalette
+    p = QPalette()
+    for role, color in ((QPalette.Window, TOOLBAR), (QPalette.WindowText, "#222222"), (QPalette.Base, "#ffffff"),
+                        (QPalette.AlternateBase, "#f3f3f3"), (QPalette.Text, "#222222"), (QPalette.Button, "#ffffff"),
+                        (QPalette.ButtonText, "#222222"), (QPalette.Highlight, "#b9d3f2"),
+                        (QPalette.HighlightedText, "#111111"), (QPalette.ToolTipBase, "#ffffe8"),
+                        (QPalette.ToolTipText, "#222222"), (QPalette.PlaceholderText, "#9a9a9a"),
+                        (QPalette.BrightText, "#000000"), (QPalette.Link, "#2a6ebb")):
+        p.setColor(role, QColor(color))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        p.setColor(QPalette.Disabled, role, QColor("#a0a0a0"))
+    return p
 
 
 class _Bridge(QObject):
@@ -83,7 +114,30 @@ class LectureEditor(QMainWindow):
 
         self.autosave = QTimer(self, interval=20000, timeout=self.save_draft); self.autosave.start()
         self.clock = QTimer(self, interval=1000, timeout=self._tick)
+        self._force_light()
+        self.edit.setCursorWidth(2)
         self._sync_state()
+
+    def _force_light(self):
+        """Fusion + a light palette for this window only (the native dark style ignores light colors)."""
+        from PySide6.QtWidgets import QAbstractButton, QComboBox, QStyleFactory
+        self._fusion = QStyleFactory.create("Fusion")
+        pal = _light_palette()
+        for w in [self] + self.findChildren(QWidget):
+            w.setStyle(self._fusion)
+            w.setPalette(pal)
+            if isinstance(w, (QAbstractButton, QComboBox)):
+                w.setCursor(Qt.PointingHandCursor)
+
+    def eventFilter(self, obj, ev):
+        from PySide6.QtCore import QEvent
+        if obj is self.edit and ev.type() == QEvent.KeyPress and ev.text() and ev.text().isprintable():
+            self._typing_format()
+        return super().eventFilter(obj, ev)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.edit.setFocus()  # caret visible right away
 
     # ------------------------------------------------------------------ layout
     def _header(self):
@@ -181,6 +235,7 @@ class LectureEditor(QMainWindow):
         f = QFont("David" if self._has_font("David") else "Arial", 12); doc.setDefaultFont(f)
         self.edit.setLayoutDirection(Qt.RightToLeft)
         self.edit.textChanged.connect(lambda: setattr(self, "_dirty", True))
+        self.edit.installEventFilter(self)  # reset live formatting right before each typed character
         self.edit.cursorPositionChanged.connect(self._sync_format_buttons)
         h.addWidget(self.edit, 6)
         h.addStretch(1)
@@ -266,8 +321,20 @@ class LectureEditor(QMainWindow):
         if follow:
             sb.setValue(sb.maximum())
 
+    LIVE = 0x100001  # QTextFormat.UserProperty + 1: marks text inserted by the transcription
+
+    def _typing_format(self):
+        """Typing right after a timestamp / ⭐ line must not inherit its gray/bold/highlight look."""
+        c = self.edit.textCursor()
+        if not c.hasSelection() and self.edit.currentCharFormat().property(self.LIVE):
+            normal = QTextCharFormat()
+            normal.setFontPointSize(12); normal.setFontWeight(QFont.Normal)
+            normal.setForeground(QBrush(QColor("#222"))); normal.setBackground(QBrush(Qt.NoBrush))
+            self.edit.setCurrentCharFormat(normal)
+
     def _fmt(self, color=None, size=None, bold=False, bg=None):
         f = QTextCharFormat()
+        f.setProperty(self.LIVE, True)
         f.setFontPointSize(size or 12)
         f.setFontWeight(QFont.Bold if bold else QFont.Normal)
         f.setForeground(QBrush(color) if color else QBrush(QColor("#222")))

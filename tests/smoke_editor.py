@@ -51,6 +51,16 @@ ok_cursor = before == after
 last = e.document().lastBlock().previous()
 it = last.begin(); hl = it.fragment().charFormat().background().style() != Qt.NoBrush
 
+# the user clicks after the ⭐ line, presses Enter and types: their text must be plain (not bold/highlighted)
+from PySide6.QtCore import Qt as _Qt  # noqa: E402
+from PySide6.QtGui import QFont  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+c = e.textCursor(); c.movePosition(QTextCursor.End); e.setTextCursor(c); e.setFocus()
+QTest.keyClick(e, _Qt.Key_Return); QTest.keyClicks(e, "my note")
+tf = e.document().lastBlock().begin().fragment().charFormat()
+ok_typing = tf.fontWeight() < QFont.Bold and tf.background().style() == _Qt.NoBrush
+print("typed after mark → bold:", tf.fontWeight() >= QFont.Bold, "highlighted:", tf.background().style() != _Qt.NoBrush)
+
 # a manual English paragraph set to LTR by the user
 c = QTextCursor(e.document()); c.movePosition(QTextCursor.End); c.insertBlock(); c.insertText("Manual English note")
 e.setTextCursor(c); ed._direction(Qt.LeftToRight)
@@ -64,4 +74,4 @@ bidi = [p._p.pPr is not None and p._p.pPr.find(qn("w:bidi")) is not None for p i
 print("docx:", [(p.text[:28], "RTL" if b else "LTR") for p, b in zip(paras, bidi)])
 ok_docx = all(bidi[:-1]) and not bidi[-1] and any("דייקסטרה" in p.text for p in paras)
 print(f"order {ok_order} | cursor untouched {ok_cursor} {before}->{after} | mark highlighted {hl} | docx {ok_docx}")
-print("RESULT:", "PASS" if all([ok_order, ok_cursor, hl, ok_docx]) else "FAIL")
+print("RESULT:", "PASS" if all([ok_order, ok_cursor, hl, ok_docx, ok_typing]) else "FAIL")
