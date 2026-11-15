@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
             "clean_min_words": 25},        # in Clean mode only for long dictations; Verbatim/Developer never
     "lecture_chunk_s": 30,           # lecture editor: a chunk every ~30 s regardless of pauses (max 29.5 s audio)
     "lecture_polish": False,         # lecture editor: normalize each chunk with the local LLM (guarded)
+    "lecture_source": "mic",         # lecture editor: "mic" | "system" (computer audio: Zoom, YouTube, recordings)
     "history": False,                # opt-in
     "inject_method": "paste",        # paste | type
     "restore_clipboard": True,

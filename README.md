@@ -26,7 +26,8 @@ Windows, Core Ultra 9 285H, FLEURS-he (details in [`bench/RESULTS.md`](bench/RES
 - **Per-app modes**: Verbatim, Clean, Professional, Developer.
 - **Optional live preview** while speaking (ivrit.ai Zipformer streaming).
 - **Lecture editor**: a built-in RTL word processor that transcribes a lecture live while you keep editing.
-  Timestamps, ⭐ important moments, a per-lecture glossary, autosave of audio + text, Word export.
+  From the mic or from the computer's own audio (Zoom, YouTube, recordings). A paragraph every ~30 s, time on hover,
+  ⭐ important moments, a per-lecture glossary, optional local-AI normalization, autosave of audio + text, Word export.
 - **Optional local LLM polish** (Gemma 4 E4B). A guard rejects any output that answers, follows dictated instructions,
   changes numbers, or adds English words you didn't say.
 - **Private**: mic opens only while recording, no dictation into password fields, no network at runtime, logs contain timings only.
@@ -87,6 +88,8 @@ A mic icon appears in the tray / menu bar (the menu is in Hebrew).
 
 - No NVIDIA/CUDA path yet; no Linux.
 - macOS: untested on hardware so far. Secure Input (password fields, some terminals) blocks dictation by design.
+  Transcribing the computer's audio on a Mac needs the free [BlackHole](https://github.com/ExistentialAudio/BlackHole)
+  driver plus a Multi-Output Device (macOS has no built-in loopback for apps).
 - Intel's digital mic takes ~0.4 s to wake (shown as "connecting"). Enable the warm-mic option for instant restarts.
 - Live preview updates every ~1.3 s (model limit).
 - The LLM polish adds 2–6 s, so it's off by default.

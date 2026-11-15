@@ -40,10 +40,11 @@ QMainWindow {{ background: {CANVAS}; }}
                        font-size: 13px; color: #2b2b2b; background: transparent; }}
 #toolbar QToolButton:hover {{ background: #e3e3e3; border-color: #c8c8c8; }}
 #toolbar QToolButton:pressed, #toolbar QToolButton:checked {{ background: #cbcbcb; border-color: #b5b5b5; }}
-#toolbar QComboBox {{ min-width: 52px; padding: 2px 6px; color: #222; background: white;
-                     border: 1px solid #c4c4c4; border-radius: 3px; }}
-#toolbar QComboBox QAbstractItemView {{ color: #222; background: white; selection-background-color: #d6e4f5;
-                                       selection-color: #222; }}
+QComboBox {{ min-width: 52px; padding: 4px 6px; color: #222; background: white;
+             border: 1px solid #c4c4c4; border-radius: 3px; }}
+QComboBox:disabled {{ color: #999; background: #f0f0f0; }}
+QComboBox QAbstractItemView {{ color: #222; background: white; selection-background-color: #d6e4f5;
+                               selection-color: #222; }}
 #sep {{ background: {BORDER}; }}
 #side {{ background: {TOOLBAR}; border-left: 1px solid {BORDER}; }}
 #side QLabel {{ color: #555; }}
@@ -244,6 +245,17 @@ class LectureEditor(QMainWindow):
         self.terms_in.setPlaceholderText("דייקסטרה, BFS, גרף מכוון, פרופ' כהן")
         self.terms_in.setPlainText(", ".join(self.store.get("lecture_terms") or []))
         v.addWidget(self.terms_in)
+        v.addWidget(QLabel("מקור הקול"))
+        self.source_box = QComboBox()
+        self.source_box.addItem("🎤  מיקרופון (הרצאה בכיתה)", "mic")
+        self.source_box.addItem("🔊  קול המחשב (Zoom, YouTube, הקלטה)", "system")
+        self.source_box.setToolTip("קול המחשב: מתמלל את מה שמתנגן ברמקולים/באוזניות של המחשב.")
+        i = self.source_box.findData(self.store.get("lecture_source") or "mic")
+        self.source_box.setCurrentIndex(max(0, i))
+        self.source_box.currentIndexChanged.connect(
+            lambda _: self.store.set("lecture_source", self.source_box.currentData()))
+        v.addWidget(self.source_box)
+        v.addSpacing(4)
         self.start_btn = QPushButton("●  התחל הקלטה", objectName="rec"); self.start_btn.clicked.connect(self.start)
         self.stop_btn = QPushButton("■  עצור"); self.stop_btn.clicked.connect(self.stop)
         self.mark_btn = QPushButton("⭐  רגע חשוב", objectName="mark"); self.mark_btn.clicked.connect(self.ctl.mark)
@@ -409,7 +421,7 @@ class LectureEditor(QMainWindow):
     def start(self):
         terms = [t.strip() for t in self.terms_in.toPlainText().replace("\n", ",").split(",") if t.strip()]
         try:
-            s = self.ctl.start(self.title_in.text(), terms, self.get_dictionary())
+            s = self.ctl.start(self.title_in.text(), terms, self.get_dictionary(), source=self.source_box.currentData())
         except Exception as e:
             QMessageBox.warning(self, "לא ניתן להתחיל", str(e)); return
         self.folder = s.folder
@@ -435,6 +447,7 @@ class LectureEditor(QMainWindow):
         rec = self.ctl.active
         self.start_btn.setEnabled(not rec); self.stop_btn.setEnabled(rec); self.mark_btn.setEnabled(rec)
         self.title_in.setEnabled(not rec)
+        self.source_box.setEnabled(not rec)
         self.rec_dot.setVisible(rec)
         if not rec:
             self.clock_lbl.setText("")
